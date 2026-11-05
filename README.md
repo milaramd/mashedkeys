@@ -13,9 +13,13 @@ Only counters are stored. No key codes, no order.
 
     make test
     make install      # builds, installs to /usr/local/bin, enables the systemd unit
+    make local-dns    # http://mashedkeys.local on this machine only
     journalctl -u mashedkeys -f
 
-## API (localhost only)
+## Portal and API (localhost only)
 
-    curl localhost:7777/api/summary                 # since_boot, today, all_time
+The portal is at http://mashedkeys.local (or http://127.0.0.1). The service listens on 127.0.0.1:80.
+
+
+    curl localhost/api/summary                 # since_boot, today, all_time
     curl 'localhost:7777/api/series?period=hour'    # minute|hour|day|month, optional from/to (unix)

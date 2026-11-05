@@ -4,6 +4,7 @@ package main
 
 import (
 	"bufio"
+	"embed"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -17,10 +18,13 @@ import (
 	"time"
 )
 
+//go:embed web
+var webFS embed.FS
+
 func main() {
 	dbPath := flag.String("db", "mashedkeys.db", "SQLite database path")
 	listen := flag.String("listen", "127.0.0.1:7777", "HTTP API address (empty to disable)")
-	flushEvery := flag.Duration("flush", 30*time.Second, "how often to write counts to the database")
+	flushEvery := flag.Duration("flush", 10*time.Second, "how often to write counts to the database")
 	flag.Parse()
 	log.SetFlags(0) // journald adds timestamps
 
@@ -72,6 +76,9 @@ func withAvg(b Bucket) Stats {
 
 func apiHandler(store *Store, counter *Counter) http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFileFS(w, r, webFS, "web/index.html")
+	})
 
 	// Totals since boot, since local midnight, and all time (unflushed counts included).
 	mux.HandleFunc("GET /api/summary", func(w http.ResponseWriter, r *http.Request) {
