@@ -222,9 +222,10 @@ function tiles(s) {
   const bsPct = t.keys ? (100 * t.backspaces / t.keys) : 0;
   const cards = [
     ["hero", "Keys today", fmt.format(t.keys), `${fmt.format(t.enters)} enters`],
-    ["", "Words today", fmt.format(t.words), t.words ? `${fmt1.format(t.keys / t.words)} keys per word` : "—"],
+    ["", "Words today", fmt.format(t.words), `${dur(t.interval_sum_ms)} typing today`],
     ["", "Since boot", fmt.format(b.keys), `${fmt.format(b.words)} words · up ${upStr}`],
-    ["", "Speed today", wpm(t) === null ? "—" : `${Math.round(wpm(t))} wpm`, `${dur(t.interval_sum_ms)} typing · ${t.interval_count ? Math.round(t.avg_interval_ms) : "—"} ms avg gap`],
+    ["", "Speed today", wpm(t) === null ? "—" : `${Math.round(wpm(t))} wpm`,
+      `${wpm(b) === null ? "—" : Math.round(wpm(b))} wpm since boot · ${dur(b.interval_sum_ms)} typing`],
     ["", "Backspace today", `${fmt1.format(bsPct)}%`, `${fmt.format(t.backspaces)} backspaces · ${fmt.format(t.deletes)} deletes`],
     ["", "All time", fmt.format(a.keys), `${fmt.format(a.words)} words`],
   ];
