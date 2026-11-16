@@ -8,6 +8,7 @@ test:
 
 install: build
 	sudo install -m 755 $(BIN) /usr/local/bin/$(BIN)
+	sudo install -m 755 deploy/mashed-daemon /usr/local/bin/mashed-daemon
 	sudo install -m 644 deploy/mashedkeys.service /etc/systemd/system/mashedkeys.service
 	sudo systemctl daemon-reload
 	sudo systemctl enable --now mashedkeys
@@ -15,7 +16,7 @@ install: build
 
 uninstall:
 	sudo systemctl disable --now mashedkeys
-	sudo rm -f /usr/local/bin/$(BIN) /etc/systemd/system/mashedkeys.service
+	sudo rm -f /usr/local/bin/$(BIN) /usr/local/bin/mashed-daemon /etc/systemd/system/mashedkeys.service
 	sudo systemctl daemon-reload
 
 # mashedkeys.local -> 127.0.0.1 on this machine only. nss-mdns answers

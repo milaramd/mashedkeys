@@ -1,0 +1,14 @@
+#!/bin/sh
+# Control the mashedkeys systemd service. Stop sends SIGTERM, which makes
+# the daemon flush pending counts to the database before exiting.
+set -eu
+
+unit=mashedkeys
+sudo=; [ "$(id -u)" -eq 0 ] || sudo=sudo
+
+case "${1:-}" in
+	start|stop|restart) $sudo systemctl "$1" "$unit" ;;
+	enable|disable) $sudo systemctl "$1" --now "$unit" ;; # also start/stop it now
+	*) echo "usage: mashed-daemon start|stop|restart|enable|disable" >&2; exit 2 ;;
+esac
+systemctl --no-pager status "$unit" | head -n 3

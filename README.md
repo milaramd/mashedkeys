@@ -16,6 +16,9 @@ Only counters are stored. No key codes, no order.
     make local-dns    # http://mashedkeys.local on this machine only
     journalctl -u mashedkeys -f
 
+    mashed-daemon start|stop|restart   # stop flushes pending counts first
+    mashed-daemon enable|disable       # on/off at boot, and starts/stops it now
+
 ## Portal and API (localhost only)
 
 The portal is at http://mashedkeys.local (or http://127.0.0.1). The service listens on 127.0.0.1:80.

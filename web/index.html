@@ -77,7 +77,7 @@ h1 span { color: var(--muted); font-weight: 400; font-size: 14px; margin-left: 8
 .chart text { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 .chart .gridline { stroke: var(--grid); stroke-width: 1; }
 .chart .baseline { stroke: var(--axis); stroke-width: 1; }
-.chart .bar { fill: var(--series); }
+.chart .bar { fill: var(--series); pointer-events: none; } /* let .hit underneath get the hover */
 .chart .hit { fill: transparent; cursor: default; outline: none; }
 .chart .hit:hover + .bar, .chart .hit:focus + .bar, .chart .bar.on { fill: var(--series-hover); }
 .chart .cell.on { stroke: var(--ink); stroke-width: 1.5; }
