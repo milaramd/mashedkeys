@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
+	"sync"
 
 	_ "modernc.org/sqlite"
 )
@@ -26,18 +28,51 @@ const sumCols = `COALESCE(SUM(keys),0), COALESCE(SUM(words),0), COALESCE(SUM(bac
 	COALESCE(SUM(interval_count),0), COALESCE(SUM(h0),0), COALESCE(SUM(h1),0), COALESCE(SUM(h2),0),
 	COALESCE(SUM(h3),0), COALESCE(SUM(h4),0), COALESCE(SUM(h5),0)`
 
-type Store struct{ db *sql.DB }
+// MaxReaders bounds concurrent API queries; the pool keeps one more
+// connection so the writer is never starved by readers (WAL lets them overlap).
+const MaxReaders = 4
+
+type Store struct {
+	db      *sql.DB
+	readers chan struct{}
+	mu      sync.Mutex
+	total   Bucket // all-time totals, kept in step with committed writes
+}
 
 func OpenStore(path string) (*Store, error) {
 	db, err := sql.Open("sqlite", path+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(1)
+	db.SetMaxOpenConns(MaxReaders + 1)
 	if _, err := db.Exec(schema); err != nil {
+		db.Close()
 		return nil, err
 	}
-	return &Store{db}, nil
+	s := &Store{db: db, readers: make(chan struct{}, MaxReaders)}
+	if s.total, err = scanBucket(db.QueryRow(`SELECT ` + sumCols + ` FROM minutes`)); err != nil {
+		db.Close()
+		return nil, err
+	}
+	return s, nil
+}
+
+// Total returns all-time totals without scanning the table.
+func (s *Store) Total() Bucket {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.total
+}
+
+// read runs a query once a reader slot is free; waiting is bounded by ctx.
+func (s *Store) read(ctx context.Context, f func() error) error {
+	select {
+	case s.readers <- struct{}{}:
+		defer func() { <-s.readers }()
+		return f()
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func (s *Store) Close() error { return s.db.Close() }
@@ -70,7 +105,15 @@ func (s *Store) Add(buckets map[int64]*Bucket) error {
 			return err
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	for _, b := range buckets {
+		s.total.add(b)
+	}
+	s.mu.Unlock()
+	return nil
 }
 
 func scanBucket(row interface{ Scan(...any) error }, extra ...any) (Bucket, error) {
@@ -82,8 +125,12 @@ func scanBucket(row interface{ Scan(...any) error }, extra ...any) (Bucket, erro
 }
 
 // Sum totals all minutes in [from, to).
-func (s *Store) Sum(from, to int64) (Bucket, error) {
-	return scanBucket(s.db.QueryRow(`SELECT `+sumCols+` FROM minutes WHERE ts >= ? AND ts < ?`, from/60*60, to))
+func (s *Store) Sum(ctx context.Context, from, to int64) (b Bucket, err error) {
+	err = s.read(ctx, func() error {
+		b, err = scanBucket(s.db.QueryRowContext(ctx, `SELECT `+sumCols+` FROM minutes WHERE ts >= ? AND ts < ?`, from/60*60, to))
+		return err
+	})
+	return b, err
 }
 
 type SeriesPoint struct {
@@ -99,12 +146,20 @@ var periodFormats = map[string]string{
 }
 
 // Series groups minutes in [from, to) by local-time period.
-func (s *Store) Series(period string, from, to int64) ([]SeriesPoint, error) {
+func (s *Store) Series(ctx context.Context, period string, from, to int64) (out []SeriesPoint, err error) {
 	f, ok := periodFormats[period]
 	if !ok {
 		return nil, fmt.Errorf("unknown period %q", period)
 	}
-	rows, err := s.db.Query(`SELECT strftime(?, ts, 'unixepoch', 'localtime') AS p, `+sumCols+`
+	err = s.read(ctx, func() error {
+		out, err = s.series(ctx, f, from, to)
+		return err
+	})
+	return out, err
+}
+
+func (s *Store) series(ctx context.Context, f string, from, to int64) ([]SeriesPoint, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT strftime(?, ts, 'unixepoch', 'localtime') AS p, `+sumCols+`
 		FROM minutes WHERE ts >= ? AND ts < ? GROUP BY p ORDER BY p`, f, from/60*60, to)
 	if err != nil {
 		return nil, err

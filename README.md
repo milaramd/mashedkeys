@@ -26,3 +26,15 @@ The portal is at http://mashedkeys.local (or http://127.0.0.1). The service list
 
     curl localhost/api/summary                 # since_boot, today, all_time
     curl 'localhost:7777/api/series?period=hour'    # minute|hour|day|month, optional from/to (unix)
+
+`series` ranges are capped per period (minute 2 days, hour 400 days, day ~10 years, month 100 years); bad or reversed ranges get a 400. Requests time out after 10s, and past 16 API requests at once the rest get a 503 instead of queueing.
+
+## Who can see the stats
+
+The portal only answers to `localhost`, `127.0.0.1`, `[::1]` and `mashedkeys.local` (any other `Host` gets a 421), so a web page can't read it through DNS rebinding.
+
+There is no login. Any local user or process on this machine can read the totals and boot time. This is fine on a single-user machine. On a shared machine, treat the counts as visible to everyone on it.
+
+## If writes fail
+
+If a write to the database fails (disk full, for example), the counts stay in memory and are retried on every flush. They're logged as failed and logged again once they're saved. Counts still unsaved when the process exits are lost, and the log says how many minutes.

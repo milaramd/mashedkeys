@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"sync"
 	"time"
 )
@@ -54,15 +55,21 @@ func (b *Bucket) add(o *Bucket) {
 
 // Counter turns key events from all keyboards into per-minute buckets.
 type Counter struct {
-	mu        sync.Mutex
-	buckets   map[int64]*Bucket // unix minute start -> counts
+	mu      sync.Mutex
+	buckets map[int64]*Bucket // unix minute start -> counts
+	retry   map[int64]*Bucket // drained but not committed yet; kept until a flush succeeds
+	// persist (capacity 1) is held while a batch moves into the store, and by
+	// Settled readers so store totals and Pending agree. It's a channel so
+	// readers can give up when their request is cancelled. Lock order: persist, then mu.
+	persist   chan struct{}
+	stopped   bool // set by Stop; later events are ignored
 	last      time.Time
 	wordChars int       // chars typed in the current word (only a number)
 	held      [256]bool // modifiers currently down
 }
 
 func NewCounter() *Counter {
-	return &Counter{buckets: map[int64]*Bucket{}}
+	return &Counter{buckets: map[int64]*Bucket{}, persist: make(chan struct{}, 1)}
 }
 
 // Event handles one EV_KEY event. value: 0 = release, 1 = press, 2 = autorepeat.
@@ -72,6 +79,9 @@ func (c *Counter) Event(code uint16, value int32, t time.Time) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.stopped {
+		return
+	}
 
 	if value != 1 {
 		if value == 0 {
@@ -147,24 +157,68 @@ func printable(code uint16) bool {
 	return false
 }
 
-// Drain returns and clears all buckets collected so far.
-func (c *Counter) Drain() map[int64]*Bucket {
+// Flush moves all counts into the store via add, which must commit all or
+// nothing. On error the batch is kept and retried (merged with newer counts)
+// on the next call, so nothing is lost or counted twice. Calls are serialized.
+func (c *Counter) Flush(add func(map[int64]*Bucket) error) (int, error) {
+	c.persist <- struct{}{}
+	defer func() { <-c.persist }()
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	out := c.buckets
-	c.buckets = map[int64]*Bucket{}
-	return out
-}
-
-// Pending returns a copy of the unflushed counts, summed, for buckets >= since.
-func (c *Counter) Pending(since int64) Bucket {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	var sum Bucket
-	for ts, b := range c.buckets {
-		if ts >= since/60*60 {
-			sum.add(b)
+	if c.retry == nil {
+		c.retry = c.buckets
+	} else {
+		for ts, b := range c.buckets {
+			if r := c.retry[ts]; r != nil {
+				r.add(b)
+			} else {
+				c.retry[ts] = b
+			}
 		}
 	}
-	return sum
+	c.buckets = map[int64]*Bucket{}
+	batch := c.retry
+	c.mu.Unlock()
+	if err := add(batch); err != nil {
+		return len(batch), err
+	}
+	c.mu.Lock()
+	c.retry = nil
+	c.mu.Unlock()
+	return len(batch), nil
+}
+
+// Stop ignores all later events, so a final Flush saves everything counted.
+func (c *Counter) Stop() {
+	c.mu.Lock()
+	c.stopped = true
+	c.mu.Unlock()
+}
+
+// Settled runs f while no flush is in progress, giving up if ctx ends first.
+func (c *Counter) Settled(ctx context.Context, f func() error) error {
+	select {
+	case c.persist <- struct{}{}:
+		defer func() { <-c.persist }()
+		return f()
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// Pending sums the unflushed counts (including failed batches) for buckets
+// >= each since, all from one snapshot.
+func (c *Counter) Pending(sinces ...int64) []Bucket {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	sums := make([]Bucket, len(sinces))
+	for _, m := range []map[int64]*Bucket{c.buckets, c.retry} {
+		for ts, b := range m {
+			for i, since := range sinces {
+				if ts >= since/60*60 {
+					sums[i].add(b)
+				}
+			}
+		}
+	}
+	return sums
 }

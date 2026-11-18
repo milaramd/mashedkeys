@@ -35,9 +35,12 @@ func TestCounter(t *testing.T) {
 	press(keyEnter, 4100)    // word 2
 
 	var b Bucket
-	for _, x := range c.Drain() {
-		b.add(x)
-	}
+	c.Flush(func(m map[int64]*Bucket) error {
+		for _, x := range m {
+			b.add(x)
+		}
+		return nil
+	})
 	if b.Keys != 12 || b.Words != 2 || b.Backspaces != 1 || b.Enters != 2 {
 		t.Fatalf("got %+v", b)
 	}
